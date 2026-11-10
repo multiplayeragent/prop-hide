@@ -813,11 +813,12 @@ function sound(kind, from) {
 let last = performance.now(), lastHb = 0, lastHud = 0, shake = 0;
 const camLook = new THREE.Vector3(), camGoal = new THREE.Vector3();
 function frame(now) {
+  requestAnimationFrame(frame);
   const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)), t = now / 1000; last = now;
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
   if (isHost()) hostTick(dt, now); else host.was = false;
   const g = game();
-  if (!g) { renderer.render(scene, camera); return requestAnimationFrame(frame); }
+  if (!g) { renderer.render(scene, camera); return; }
   myTick(dt, g, now);
   const all = people(g);
   effects(g, all);
@@ -826,7 +827,6 @@ function frame(now) {
   moveCamera(g, all, dt);
   renderer.render(scene, camera);
   if (now - lastHud > 100) { lastHud = now; hud(g); }
-  requestAnimationFrame(frame);
 }
 // Drawing: other players and (on non-hosts) bots arrive ~10 times a second; they are drawn LAG ms in
 // the past, between the two updates around that moment, so they glide instead of stepping.
