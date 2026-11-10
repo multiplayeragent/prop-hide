@@ -1,0 +1,924 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Prop Hide</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #2a1d17; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 4px #000a; font-weight: 800; }
+  #round { top: max(10px, env(safe-area-inset-top)); left: 0; right: 0; text-align: center; font-size: 22px; }
+  #round small { display: block; font-size: 15px; letter-spacing: 2px; margin-top: 2px; }
+  #role { top: calc(max(10px, env(safe-area-inset-top)) + 62px); left: 50%; transform: translateX(-50%); padding: 3px 14px; border-radius: 999px; font-size: 14px; white-space: nowrap; text-shadow: none; }
+  #role.hider { background: #2fa36b; } #role.seeker { background: #e0503d; } #role:empty { display: none; }
+  #big { inset: 0; display: grid; place-items: center; text-align: center; font-size: min(12vw, 84px); line-height: 1; color: #ffe08a; -webkit-text-stroke: 3px #5a2a12; padding: 0 16px; }
+  #big small { display: block; font-size: min(5vw, 22px); color: #fff; -webkit-text-stroke: 0; margin-top: 12px; }
+  #msg { left: 16px; right: 16px; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 30px); text-align: center; font-size: 16px; }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 600; opacity: .85; white-space: nowrap; }
+  #blind { position: fixed; inset: 0; display: grid; place-items: center; background: #120c0aee; color: #ffe08a; font-weight: 800; font-size: 26px; text-align: center; pointer-events: none; padding: 0 16px; }
+  #blind small { display: block; font-size: 16px; color: #fff; opacity: .85; margin-top: 8px; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #1a0f0a66; }
+  #over[hidden], #blind[hidden], #stick[hidden], .pad[hidden], .pad button[hidden] { display: none; }
+  .card { width: min(380px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 18px; background: #3a2418; border: 2px solid #ffffff33; box-sizing: border-box; }
+  .card h2 { margin: 0 0 4px; font-size: 24px; color: #ffe08a; }
+  .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ffb38a; }
+  .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li.me { color: #ffe08a; font-weight: 700; }
+  .card p { margin: 6px 0 0; font-size: 14px; opacity: .9; }
+  button.go { margin-top: 16px; width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffe08a; color: #3a2418; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  #stick { position: fixed; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: #ffffff22; border: 2px solid #ffffff88; pointer-events: none; }
+  #stick i { position: absolute; left: 35px; top: 35px; width: 50px; height: 50px; border-radius: 50%; background: #ffffffaa; }
+  .pad { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(22px, env(safe-area-inset-bottom)); display: flex; gap: 12px; }
+  .pad button { width: 78px; height: 78px; border-radius: 50%; border: 3px solid #ffffffaa; background: #00000055; color: #fff; font: 800 14px system-ui, sans-serif; touch-action: none; }
+  .pad button.wait { opacity: .4; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+<script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
+</head>
+<body>
+<div class="hud" id="round"></div>
+<div class="hud" id="role"></div>
+<div class="hud" id="big"></div>
+<div class="hud" id="msg"></div>
+<div id="blind" hidden></div>
+<div class="hud" id="net">Connecting…</div>
+<div id="stick" hidden><i></i></div>
+<div class="pad" id="pad" hidden><button data-k="change">CHANGE</button><button data-k="turn">TURN</button><button data-k="tag">TAG</button></div>
+<div id="over" hidden><div class="card">
+  <h2 id="overTitle"></h2><p id="overLine"></p>
+  <h3>This round</h3><ol id="results"></ol>
+  <h3>Best rounds</h3><ol id="board"><li>Loading…</li></ol>
+  <button class="go" id="again">Play again</button>
+  <p id="next"></p>
+</div></div>
+<script type="module">
+/* ═══ PROP HIDE · a Multiplayer Agent starter ══════════════════════════════════════════
+ * Hiders turn into crates, lamps and plants. Seekers tag the fakes. Party, 3–10 players;
+ * bots fill empty seats.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ timers, speeds, reach, points, the props, the house's map
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   HOUSE ......... reading CONFIG.map: walls, furniture, rugs, the decoy props; bumping into
+ *                   things; paths for bots; line of sight
+ *   PROPS & KIDS .. one builder per prop (add a prop: add a builder + a letter in CONFIG.props),
+ *                   the seeker model, name tags, floating text
+ *   ROUND (HOST) .. hide → seek → over: picking seekers, tags, finds, squeaks, points.
+ *                   Only the host writes these.
+ *   BOTS .......... bot hiders pick a spot next to look-alikes; bot seekers search, get
+ *                   suspicious of props that move or squeak, and sometimes tag a real lamp
+ *   ME ............ walking, changing prop, turning. Each player writes only its own.
+ *   HUD & RESULTS . timer, your role, hints, results card, leaderboard
+ *   INPUT & SOUND . keyboard, mouse, touch stick and buttons, WebAudio effects
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `p` (one packed JSON field: round id, position,
+ *     facing, which prop you are) about 10 times a second while you move, `hb` (heartbeat)
+ *     once a second, and `n`/`c` (name, color) once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared fields `game` (id, v, phase,
+ *     timers, who seeks, who was found, misses, the squeak, points, the winner) and `bots`
+ *     (every bot's position and prop, ~10 times a second). A new host adopts both.
+ *   - Intents to the host: "tag" {t} (a seeker taps a prop: a decoy "d12" or a player id;
+ *     the host checks the seeker is close and writes a find or a miss) and "again".
+ *   - Found hiders join the seekers. A new round starts only when the host bumps game.id.
+ *   - NOT SECRET: which prop is a player is in the room state, so someone poking around
+ *     in their browser's dev tools could find every hider. The game plays fair on screen.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "best-round": your most points in one round, on the results card.
+ */
+import * as THREE from "three";
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  seats: 8,              // bots fill the round up to this many players
+  seekers: 0.25,         // share of the players who seek (at least 1): 2 of 8
+  hideMs: 15000,         // hiders get this long before the seekers open their eyes
+  seekMs: 100000,        // seekers have this long to find everyone
+  overMs: 9000,          // results before the next round
+  hiderSpeed: 4.2,       // units/s
+  seekerSpeed: 5.0,
+  botPace: 0.9,          // bots walk at this share of a player's speed
+  reach: 3.0,            // a seeker can tag a prop this close
+  missStunMs: 2000,      // tag a real prop and you can't tag again for this long
+  foundStunMs: 2500,     // a found hider pops out and joins the seekers after this long
+  squeakEvery: 15000,    // every so often a random hider squeaks (everyone hears it)
+  points: { find: 3, per10s: 1, survive: 5 }, // per10s = hiders, for every 10 seconds unfound
+  board: "best-round",
+  tile: 2,               // world units per map character
+  // What a hider can turn into. The letter is how the map marks a decoy of that kind; r = how wide it is.
+  props: {
+    c: { name: "crate", r: 0.55 },
+    b: { name: "barrel", r: 0.45 },
+    l: { name: "lamp", r: 0.35 },
+    p: { name: "plant", r: 0.45 },
+    h: { name: "chair", r: 0.45 },
+    v: { name: "vase", r: 0.32 },
+  },
+  // Furniture you can't become: h = height, color, and a pattern for the top.
+  furniture: {
+    U: { name: "sofa", h: 0.9, color: "#c8524a", top: "fabric" },
+    T: { name: "table", h: 0.8, color: "#a8713f", top: "wood" },
+    F: { name: "counter", h: 1.0, color: "#e9e4da", top: "tiles" },
+    E: { name: "bed", h: 0.6, color: "#5b7fd6", top: "stripes" },
+    K: { name: "shelf", h: 2.0, color: "#7a4e2c", top: "wood" },
+  },
+  // The house. # wall, . floor, a prop letter = a decoy, a furniture letter = furniture,
+  // S where seekers wait, H where hiders start.
+  map: [
+    "########################",
+    "#p.UUU.l#FFFFFF#EEE..lp#",
+    "#......p#.....c#EEE....#",
+    "#l..TT..#h.TT.h#......v#",
+    "#...TT..#h.TT.h#.p....l#",
+    "#v.....h#b....c#c..KK..#",
+    "####.#######.#####.#####",
+    "#p.........H..........p#",
+    "#l....S...............l#",
+    "####.#######.######.####",
+    "#cc....b...#.....h.KKKK#",
+    "#c..TT..b..#.v.......p.#",
+    "#b..TT..c..#l..TT.....h#",
+    "#......bcc.#...TT..p...#",
+    "#cb.....cc.#.l.....v..h#",
+    "########################",
+  ],
+  // Rugs (in map cells): x, z, w, d, color.
+  rugs: [[2, 2, 5, 4, "#c8424f"], [17, 3, 5, 3, "#4a6fd0"], [13, 11, 6, 4, "#3f9f6a"], [1, 7, 22, 2, "#5f9f98"]],
+};
+const BOT_NAMES = ["Skip", "Pip", "Juno", "Dot", "Bix", "Rue", "Taz", "Momo", "Kit", "Zuzu"];
+const COLORS = ["#ff5d73", "#ff9f43", "#ffd23f", "#3fc78a", "#4da3ff", "#b77dff", "#ff6fb5", "#3fc7c0", "#a3e635", "#f97316"];
+const KINDS = Object.keys(CONFIG.props);
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'prop-hide',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+if (ATTRACT) Object.assign(CONFIG, { seats: 9, seekers: 0.34, hideMs: 400, seekMs: 40000, overMs: 2500, squeakEvery: 3000 });
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never mutate what this returns). */
+function shared(key, fb) { const raw = S.shared[key], m = memo.get(key); if (m && m.raw === raw) return m.v; const v = parse(raw, fb); memo.set(key, { raw, v }); return v; }
+let net = null, S = { entities: { players: {} }, shared: {} };
+const seenHb = new Map();
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+const isBot = (id) => id[0] === "@"; // bot ids look like "@3"; sessionIds never have an @
+
+// ── HOUSE ───────────────────────────────────────────────────────────────────────────
+const MAP = CONFIG.map, MH = MAP.length, MW = MAP[0].length, TS = CONFIG.tile, R = 0.4;
+const cell = (cx, cz) => (MAP[cz] && MAP[cz][cx]) || "#";
+const solid = (cx, cz) => cell(cx, cz) === "#" || !!CONFIG.furniture[cell(cx, cz)];
+const toCell = (v) => Math.floor(v / TS);
+const center = (cx, cz) => ({ x: (cx + 0.5) * TS, z: (cz + 0.5) * TS });
+const find = (test) => MAP.flatMap((row, z) => [...row].flatMap((c, x) => (test(c) ? [{ ...center(x, z), ch: c, cx: x, cz: z }] : [])));
+const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const clone = (o) => JSON.parse(JSON.stringify(o));
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const SEEK_START = find((c) => c === "S")[0], HIDE_START = find((c) => c === "H")[0];
+// The decoys: real props that belong to the house. Same spots and turns on every client (a fixed seed).
+const DECOYS = (() => { const r = mulberry32(7); return find((c) => !!CONFIG.props[c]).map((d, i) => ({ id: "d" + i, k: d.ch, x: d.x + (r() - 0.5) * 0.6, z: d.z + (r() - 0.5) * 0.6, h: Math.floor(r() * 8) * (Math.PI / 4) })); })();
+const wallAt = (x, z) => solid(toCell(x), toCell(z));
+/** Move a body ({x, z}), sliding along walls and furniture and pushed out of props (`circles`). */
+function moveBody(o, dx, dz, r, circles) {
+  const hit = (x, z) => wallAt(x - r, z - r) || wallAt(x + r, z - r) || wallAt(x - r, z + r) || wallAt(x + r, z + r);
+  if (!hit(o.x + dx, o.z)) o.x += dx;
+  if (!hit(o.x, o.z + dz)) o.z += dz;
+  for (const c of circles) {
+    const ex = o.x - c.x, ez = o.z - c.z, d = Math.hypot(ex, ez), min = c.r + r;
+    if (d < min && d > 1e-4) { const nx = c.x + (ex / d) * min, nz = c.z + (ez / d) * min; if (!hit(nx, nz)) { o.x = nx; o.z = nz; } }
+  }
+}
+/** Walls block sight; furniture and props don't. */
+function canSee(a, b) {
+  const d = dist(a, b), n = Math.ceil(d / 0.4);
+  for (let i = 1; i < n; i++) { const t = i / n; if (cell(toCell(a.x + (b.x - a.x) * t), toCell(a.z + (b.z - a.z) * t)) === "#") return false; }
+  return true;
+}
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+/** A walkable route from a to b as cell centres (ending at b), or [] if there is none. */
+function route(a, b) {
+  const sx = toCell(a.x), sz = toCell(a.z), gx = toCell(b.x), gz = toCell(b.z), goal = gx + gz * MW;
+  if (solid(gx, gz)) return [];
+  const prev = new Int32Array(MW * MH).fill(-1), q = [sx + sz * MW];
+  prev[q[0]] = q[0];
+  for (let h = 0; h < q.length && prev[goal] < 0; h++) {
+    const k = q[h], x = k % MW, z = (k / MW) | 0;
+    for (const [dx, dz] of DIRS) {
+      const nx = x + dx, nz = z + dz, n = nx + nz * MW;
+      if (solid(nx, nz) || prev[n] >= 0 || (dx && dz && (solid(x + dx, z) || solid(x, z + dz)))) continue;
+      prev[n] = k; q.push(n);
+    }
+  }
+  if (prev[goal] < 0) return [];
+  const out = [{ x: b.x, z: b.z }];
+  for (let k = prev[goal]; k !== prev[k]; k = prev[k]) out.unshift(center(k % MW, (k / MW) | 0));
+  return out;
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: !ATTRACT }); // the preview recorder renders in software: keep it cheap
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.autoUpdate = false; // only walls and furniture cast sun shadows (props use soft blobs, decoys and hiders alike)
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#7cb86a");
+scene.fog = new THREE.Fog("#7cb86a", 34, 80);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 200);
+function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.fov = ATTRACT ? 44 : camera.aspect < 1 ? 70 : 50; camera.updateProjectionMatrix(); } // wider on a tall phone
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+scene.add(new THREE.HemisphereLight("#fff1dc", "#5a4030", 1.6));
+const sun = new THREE.DirectionalLight("#ffe2b8", 1.6);
+sun.position.set(MW * TS * 0.3, 40, MH * TS * 0.9); sun.target.position.set(MW * TS / 2, 0, MH * TS / 2); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 100 }); sun.shadow.bias = -0.0006;
+scene.add(sun, sun.target);
+function canvasTex(w, h, paint, rx, ry) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; paint(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  if (rx) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); }
+  return t;
+}
+const mat = (color, more) => new THREE.MeshStandardMaterial({ color, roughness: 0.75, ...more });
+const speckle = (c, w, h, n, a) => { for (let i = 0; i < n; i++) { c.fillStyle = `rgba(0,0,0,${Math.random() * a})`; c.fillRect(Math.random() * w, Math.random() * h, 2, 2); } };
+// Wooden floor boards, rugs, walls with wallpaper, furniture blocks.
+const boards = canvasTex(128, 128, (c, w, h) => { for (let i = 0; i < 8; i++) { c.fillStyle = ["#d9ac72", "#cfa067", "#e0b57d", "#d3a56b"][i % 4]; c.fillRect(0, i * 16, w, 16); c.fillStyle = "#0003"; c.fillRect(0, i * 16 + 15, w, 1); c.fillRect(((i * 53) % 128), i * 16, 1, 16); } speckle(c, w, h, 300, 0.12); }, MW, MH);
+const lawn = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), mat("#7cb86a", { roughness: 1 }));
+lawn.rotation.x = -Math.PI / 2; lawn.position.set((MW * TS) / 2, -0.02, (MH * TS) / 2); scene.add(lawn); // the garden round the house
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(MW * TS, MH * TS), mat("#ffffff", { map: boards, roughness: 0.8 }));
+floor.rotation.x = -Math.PI / 2; floor.position.set((MW * TS) / 2, 0, (MH * TS) / 2); floor.receiveShadow = true; scene.add(floor);
+for (const [x, z, w, d, color] of CONFIG.rugs) {
+  const tex = canvasTex(64, 64, (c) => { c.fillStyle = color; c.fillRect(0, 0, 64, 64); c.strokeStyle = "#ffffff55"; c.lineWidth = 3; c.strokeRect(5, 5, 54, 54); c.strokeRect(11, 11, 42, 42); });
+  const rug = new THREE.Mesh(new THREE.PlaneGeometry(w * TS - 0.4, d * TS - 0.4), mat("#ffffff", { map: tex, roughness: 1 }));
+  rug.rotation.x = -Math.PI / 2; rug.position.set((x + w / 2) * TS, 0.015, (z + d / 2) * TS); rug.receiveShadow = true; scene.add(rug);
+}
+const WALL_H = 1.5, mtx = new THREE.Matrix4();
+const wallTex = canvasTex(64, 64, (c) => { c.fillStyle = "#f3e6cf"; c.fillRect(0, 0, 64, 64); c.fillStyle = "#e6d3b2"; for (let x = 0; x < 64; x += 16) c.fillRect(x, 0, 6, 64); c.fillStyle = "#7a8aa8"; c.fillRect(0, 54, 64, 10); });
+const wallTop = mat("#5d6d8a");
+function instanced(geo, material, spots, y, cast = true) {
+  const m = new THREE.InstancedMesh(geo, material, Math.max(1, spots.length));
+  spots.forEach((p, i) => m.setMatrixAt(i, mtx.makeTranslation(p.x, y, p.z)));
+  m.count = spots.length; m.castShadow = cast; m.receiveShadow = true; scene.add(m); return m;
+}
+instanced(new THREE.BoxGeometry(TS, WALL_H, TS), [mat("#fff", { map: wallTex }), mat("#fff", { map: wallTex }), wallTop, wallTop, mat("#fff", { map: wallTex }), mat("#fff", { map: wallTex })], find((c) => c === "#"), WALL_H / 2);
+const topTex = {
+  fabric: (col) => canvasTex(64, 64, (c) => { c.fillStyle = col; c.fillRect(0, 0, 64, 64); c.fillStyle = "#ffffff22"; for (let i = 0; i < 64; i += 8) c.fillRect(0, i, 64, 3); }),
+  wood: (col) => canvasTex(64, 64, (c) => { c.fillStyle = col; c.fillRect(0, 0, 64, 64); c.fillStyle = "#0002"; for (let i = 0; i < 64; i += 11) c.fillRect(0, i, 64, 2); }),
+  tiles: (col) => canvasTex(64, 64, (c) => { c.fillStyle = col; c.fillRect(0, 0, 64, 64); c.strokeStyle = "#b9b2a5"; c.lineWidth = 2; for (let i = 0; i <= 64; i += 16) { c.beginPath(); c.moveTo(i, 0); c.lineTo(i, 64); c.moveTo(0, i); c.lineTo(64, i); c.stroke(); } }),
+  stripes: (col) => canvasTex(64, 64, (c) => { c.fillStyle = col; c.fillRect(0, 0, 64, 64); c.fillStyle = "#ffffff"; c.fillRect(0, 0, 64, 14); c.fillStyle = "#ffffff44"; for (let i = 20; i < 64; i += 10) c.fillRect(0, i, 64, 4); }),
+};
+for (const [ch, f] of Object.entries(CONFIG.furniture)) {
+  const side = mat(f.color), top = mat("#fff", { map: topTex[f.top](f.color) });
+  instanced(new THREE.BoxGeometry(TS * 0.98, f.h, TS * 0.98), [side, side, top, side, side, side], find((c) => c === ch), f.h / 2);
+}
+renderer.shadowMap.needsUpdate = true;
+
+// Particles: a ring buffer of little cubes (confetti, dust).
+const PARTS = 220, parts = Array.from({ length: PARTS }, () => ({ life: 0 })), Q = new THREE.Quaternion(), E3 = new THREE.Euler(), V3 = new THREE.Vector3(), SC = new THREE.Vector3();
+const partMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.15, 0.15, 0.04), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), PARTS);
+partMesh.setColorAt(0, new THREE.Color("#fff")); partMesh.frustumCulled = false; scene.add(partMesh);
+let nextPart = 0;
+function burst(x, y, z, colors, n, speed) {
+  for (let i = 0; i < n; i++) {
+    const p = parts[nextPart]; partMesh.setColorAt(nextPart, new THREE.Color(colors[i % colors.length])); nextPart = (nextPart + 1) % PARTS;
+    Object.assign(p, { x, y, z, vx: (Math.random() - 0.5) * speed, vy: Math.random() * speed, vz: (Math.random() - 0.5) * speed, life: 0.8 + Math.random() * 0.6, r: Math.random() * 6 });
+  }
+  partMesh.instanceColor.needsUpdate = true;
+}
+function drawParts(dt) {
+  parts.forEach((p, i) => {
+    if (p.life > 0) { p.life -= dt; p.vy -= 9 * dt; p.x += p.vx * dt; p.y = Math.max(0.05, p.y + p.vy * dt); p.z += p.vz * dt; p.r += dt * 7; }
+    const s = p.life > 0 ? Math.min(1, p.life * 2) : 0;
+    partMesh.setMatrixAt(i, mtx.compose(V3.set(p.x || 0, p.y || 0, p.z || 0), Q.setFromEuler(E3.set(p.r || 0, (p.r || 0) * 0.7, 0)), SC.set(s, s, s)));
+  });
+  partMesh.instanceMatrix.needsUpdate = true;
+}
+
+// ── PROPS & KIDS ────────────────────────────────────────────────────────────────────
+// One builder per prop kind. A hider's prop is built by the same builder as the decoys, so they look the same.
+const crateTex = canvasTex(64, 64, (c) => { c.fillStyle = "#b07a42"; c.fillRect(0, 0, 64, 64); c.fillStyle = "#946232"; for (let i = 0; i < 64; i += 16) c.fillRect(0, i + 14, 64, 2); c.strokeStyle = "#6b4321"; c.lineWidth = 6; c.strokeRect(3, 3, 58, 58); c.beginPath(); c.moveTo(4, 4); c.lineTo(60, 60); c.stroke(); });
+const PM = {
+  crate: mat("#fff", { map: crateTex }), wood: mat("#9a6838"), band: mat("#4b4f58", { metalness: 0.5, roughness: 0.4 }), barrel: mat("#a5562f"),
+  brass: mat("#c9a44a", { metalness: 0.6, roughness: 0.35 }), shade: mat("#fff3c4", { emissive: "#ffcf6a", emissiveIntensity: 0.55, side: THREE.DoubleSide }),
+  pot: mat("#c4643c"), leaf: mat("#4fa04a", { flatShading: true }), leaf2: mat("#6cbf55", { flatShading: true }), seat: mat("#c0392b"), vase: mat("#4a7fd0", { roughness: 0.35 }), white: mat("#f4efe6"),
+};
+const blobGeo = new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2), blobMat = new THREE.MeshBasicMaterial({ color: "#000", transparent: true, opacity: 0.28, depthWrite: false });
+const BUILD = {
+  c: (g) => { add(g, new THREE.BoxGeometry(1.05, 1.05, 1.05), PM.crate, 0, 0.525, 0); },
+  b: (g) => { add(g, new THREE.CylinderGeometry(0.42, 0.42, 1.1, 18), PM.barrel, 0, 0.55, 0); for (const y of [0.2, 0.9]) add(g, new THREE.CylinderGeometry(0.44, 0.44, 0.08, 18), PM.band, 0, y, 0); },
+  l: (g) => { add(g, new THREE.CylinderGeometry(0.28, 0.32, 0.08, 16), PM.brass, 0, 0.04, 0); add(g, new THREE.CylinderGeometry(0.04, 0.04, 1.5, 8), PM.brass, 0, 0.8, 0); add(g, new THREE.CylinderGeometry(0.22, 0.38, 0.42, 18, 1, true), PM.shade, 0, 1.62, 0); },
+  p: (g) => { add(g, new THREE.CylinderGeometry(0.32, 0.24, 0.5, 14), PM.pot, 0, 0.25, 0); add(g, new THREE.IcosahedronGeometry(0.42, 0), PM.leaf, 0, 0.82, 0); add(g, new THREE.IcosahedronGeometry(0.3, 0), PM.leaf2, 0.2, 1.1, 0.1); add(g, new THREE.IcosahedronGeometry(0.26, 0), PM.leaf, -0.18, 1.05, -0.12); },
+  h: (g) => { add(g, new THREE.BoxGeometry(0.8, 0.12, 0.8), PM.seat, 0, 0.5, 0); add(g, new THREE.BoxGeometry(0.8, 0.8, 0.1), PM.wood, 0, 0.95, -0.36); for (const [x, z] of [[-0.33, -0.33], [0.33, -0.33], [-0.33, 0.33], [0.33, 0.33]]) add(g, new THREE.BoxGeometry(0.08, 0.5, 0.08), PM.wood, x, 0.25, z); },
+  v: (g) => { const pts = [[0.001, 0], [0.2, 0.02], [0.3, 0.25], [0.26, 0.55], [0.13, 0.75], [0.17, 0.9]].map(([x, y]) => new THREE.Vector2(x, y)); add(g, new THREE.LatheGeometry(pts, 18), PM.vase, 0, 0, 0); add(g, new THREE.TorusGeometry(0.28, 0.025, 6, 18).rotateX(Math.PI / 2), PM.white, 0, 0.35, 0); },
+};
+function add(g, geo, m, x, y, z) { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); g.add(o); return o; }
+const pickables = []; // every prop's group; group.userData.pid says what it is
+function makeProp(kind, pid) {
+  const g = new THREE.Group();
+  BUILD[kind](g);
+  const blob = new THREE.Mesh(blobGeo, blobMat); blob.scale.setScalar(CONFIG.props[kind].r + 0.15); blob.position.y = 0.012; g.add(blob);
+  g.userData.pid = pid; pickables.push(g); scene.add(g); return g;
+}
+function dropProp(g) { if (!g) return; scene.remove(g); const i = pickables.indexOf(g); if (i >= 0) pickables.splice(i, 1); }
+for (const d of DECOYS) { const g = makeProp(d.k, d.id); g.position.set(d.x, 0, d.z); g.rotation.y = d.h; d.g = g; }
+
+// Seekers (and found hiders) are kids with a detective hat.
+const skin = mat("#ffe0c2"), black = mat("#1d2433"), shoe = mat("#3a3f4f"), hat = mat("#6b4a2e"), hatBand = mat("#2b1d14");
+const bodyGeo = new THREE.CapsuleGeometry(0.4, 0.4, 4, 14), headGeo = new THREE.SphereGeometry(0.42, 18, 14), eyeGeo = new THREE.SphereGeometry(0.065, 8, 6);
+const armGeo = new THREE.CapsuleGeometry(0.1, 0.32, 3, 8), footGeo = new THREE.SphereGeometry(0.15, 10, 8), brimGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.05, 20), crownGeo = new THREE.CylinderGeometry(0.28, 0.33, 0.3, 18);
+function nameTag(text, color = "#fff") {
+  const tex = canvasTex(256, 64, (c) => { c.font = "bold 32px system-ui"; c.textAlign = "center"; c.lineWidth = 6; c.strokeStyle = "#000a"; c.strokeText(text, 128, 44); c.fillStyle = color; c.fillText(text, 128, 44); });
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true })); s.scale.set(3, 0.75, 1); return s;
+}
+function makeKid(color) {
+  const g = new THREE.Group(), rig = new THREE.Group(), bodyMat = mat(color, { roughness: 0.55 });
+  const part = (geo, m, x, y, z, parent = rig) => add(parent, geo, m, x, y, z);
+  part(bodyGeo, bodyMat, 0, 0.75, 0);
+  const head = new THREE.Group(); head.position.y = 1.52; rig.add(head);
+  part(headGeo, skin, 0, 0, 0, head);
+  for (const s of [-1, 1]) part(eyeGeo, black, s * 0.15, 0.05, 0.38, head);
+  part(brimGeo, hat, 0, 0.32, -0.04, head); part(crownGeo, hat, 0, 0.48, -0.04, head); part(new THREE.CylinderGeometry(0.335, 0.335, 0.07, 18), hatBand, 0, 0.37, -0.04, head);
+  const arms = [-1, 1].map((s) => { const p = new THREE.Group(); p.position.set(s * 0.48, 1.05, 0); rig.add(p); part(armGeo, bodyMat, 0, -0.22, 0, p); return p; });
+  const feet = [-1, 1].map((s) => part(footGeo, shoe, s * 0.2, 0.12, 0.05));
+  const blob = new THREE.Mesh(blobGeo, blobMat); blob.scale.setScalar(0.55); blob.position.y = 0.012;
+  g.add(rig, blob); scene.add(g);
+  return { g, rig, arms, feet };
+}
+function poseKid(k, moving, stunned, t) {
+  const sw = moving ? Math.sin(t * 13) : 0;
+  k.rig.position.y = Math.abs(sw) * 0.1; k.rig.rotation.z = stunned ? Math.sin(t * 9) * 0.15 : 0;
+  k.arms[0].rotation.x = sw * 0.8; k.arms[1].rotation.x = -sw * 0.8;
+  k.feet.forEach((f, i) => (f.position.z = 0.05 + (i ? sw : -sw) * 0.16));
+}
+// Floating words ("FOUND!", "bonk", ♪) that rise and fade.
+const floaters = [];
+function floatText(text, x, y, z, color, size = 1) {
+  const s = nameTag(text, color); s.scale.multiplyScalar(size * 1.4); s.position.set(x, y, z); scene.add(s);
+  floaters.push({ s, life: 1.6, y });
+}
+function drawFloaters(dt) {
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i]; f.life -= dt; f.s.position.y += dt * 1.2; f.s.material.opacity = Math.min(1, f.life * 2);
+    if (f.life <= 0) { scene.remove(f.s); floaters.splice(i, 1); }
+  }
+}
+
+// ── ROUND (HOST) ────────────────────────────────────────────────────────────────────
+const host = { was: false, last: null, bots: new Map(), lastPub: 0, again: false, moved: new Map(), lastPos: new Map(), nextSqueak: 0 };
+/** The round as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function game() { const g = shared("game", null); return host.last && isHost() && (!g || host.last.v > g.v) ? host.last : g; }
+function writeGame(g) { g = { ...g, v: (game()?.v ?? 0) + 1 }; host.last = g; net.setShared("game", JSON.stringify(g)); return g; }
+const newBody = () => ({ x: 0, z: 0, h: 0, k: KINDS[Math.floor(Math.random() * KINDS.length)], mv: false, goal: null, path: [], think: 0, spot: null, target: "", wander: 0, seen: new Set() });
+
+function startRound(id) {
+  const here = livePlayers(), seated = here.filter((h) => !(ATTRACT && h === net.sessionId)); // in ?attract your autopilot takes a bot's seat
+  syncBots(Math.max(0, CONFIG.seats - seated.length - (ATTRACT ? 1 : 0)));
+  const ids = [...here, ...host.bots.keys()], prev = game(), was = new Set(prev ? prev.seek0 : []);
+  // Seekers: up to half the people (a solo player hides first, then seeks every other round), the rest bots.
+  const n = Math.max(1, Math.round(ids.length * CONFIG.seekers));
+  const shuffle = (list) => list.map((i) => [i, (was.has(i) ? 2 : 0) + Math.random()]).sort((a, b) => a[1] - b[1]).map((r) => r[0]);
+  const humans = shuffle(here), bots = shuffle([...host.bots.keys()]);
+  const nPeople = Math.min(n, prev ? Math.ceil(humans.length / 2) : Math.floor(humans.length / 2), humans.filter((i) => !was.has(i)).length);
+  const seek = [...humans.slice(0, nPeople), ...bots, ...humans.slice(nPeople)].slice(0, n);
+  const t = Date.now();
+  const G = { id, phase: "hide", seekAt: t + CONFIG.hideMs, endsAt: t + CONFIG.hideMs + CONFIG.seekMs, seek, seek0: seek, found: {}, stun: {}, pts: {}, miss: null, sq: null, win: "", endedAt: 0,
+    roster: ids.map((i) => [i, nameOf(i), colorOf(i)]) };
+  host.nextSqueak = G.seekAt + CONFIG.squeakEvery; host.moved.clear();
+  for (const b of host.bots.values()) Object.assign(b, newBody(), spawnFor(b.id, G));
+  return writeGame(G);
+}
+/** Seekers wait in the hall (eyes shut); hiders start in the middle of the hall. In ?attract hiders start hidden. */
+function spawnFor(id, G) {
+  const seeker = G.seek.includes(id), list = G.roster.map((r) => r[0]).filter((i) => G.seek.includes(i) === seeker);
+  const i = Math.max(0, list.indexOf(id)), at = seeker ? SEEK_START : HIDE_START;
+  if (ATTRACT && seeker) return { ...FLOOR[(i * 37 + G.id * 13) % FLOOR.length], h: 0 }; // the preview starts mid-search
+  return { x: at.x + ((i % 4) - 1.5) * 1.1, z: at.z + (i >= 4 ? 1 : 0) * 1.1 - 0.5, h: 0 };
+}
+/** Become host: take over the round and the bots exactly as state has them. */
+function adopt() {
+  host.was = true; host.bots.clear();
+  for (const b of shared("bots", [])) host.bots.set(b.i, { ...newBody(), id: b.i, name: b.n, color: b.c, x: b.x, z: b.z, h: b.h, k: b.k, spot: { x: b.x, z: b.z, h: b.h, k: b.k } });
+  const g = game(); host.nextSqueak = Date.now() + CONFIG.squeakEvery * 0.5; if (g) host.moved.clear();
+}
+function syncBots(want) {
+  for (let i = 1; host.bots.size < want && i < 64; i++) if (!host.bots.has("@" + i)) {
+    const used = new Set([...host.bots.values()].map((b) => b.color).concat(livePlayers().map(colorOf)));
+    host.bots.set("@" + i, { ...newBody(), id: "@" + i, name: BOT_NAMES[(i - 1) % BOT_NAMES.length], color: COLORS.find((c) => !used.has(c)) || COLORS[i % COLORS.length] });
+  }
+  while (host.bots.size > want) host.bots.delete([...host.bots.keys()].pop());
+}
+function botList() {
+  if (!isHost()) return shared("bots", []);
+  return [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: +b.x.toFixed(2), z: +b.z.toFixed(2), h: +b.h.toFixed(2), k: b.k, m: b.mv ? 1 : 0 }));
+}
+const posCache = new Map();
+/** Another player's packed `p` field, parsed once per change. */
+function posOf(id, p) { let c = posCache.get(id); if (!c || c.raw !== p.p) { c = { raw: p.p, v: parse(p.p, null) }; posCache.set(id, c); } return c.v; }
+/** Everyone in this round at their latest known spot: { id, name, color, x, z, h, k, mv, bot, mine }. */
+function people(G) {
+  const out = [], live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === net.sessionId) { out.push({ id, name: myName, color: myColor, x: me.x, z: me.z, h: me.h, k: me.k, mv: me.mv, mine: true }); continue; }
+    const q = posOf(id, p);
+    if (live.has(id) && q && (!G || q.g === G.id)) out.push({ id, name: p.n || "Player", color: p.c || "#ccc", x: q.x, z: q.z, h: q.h, k: q.k || "c", mv: !!q.m });
+  }
+  const bots = isHost() ? [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: b.x, z: b.z, h: b.h, k: b.k, m: b.mv })) : botList();
+  for (const b of bots) out.push({ id: b.i, name: b.n, color: b.c, x: b.x, z: b.z, h: b.h, k: b.k, mv: !!b.m, bot: true });
+  return out;
+}
+const isSeeker = (id, G) => G.seek.includes(id);
+const canMove = (id, G) => !(G.phase === "hide" && isSeeker(id, G)) && !((G.stun[id] || 0) > Date.now() && G.found[id]);
+
+function hostTick(dt, now) {
+  if (!host.was) adopt();
+  let g = game();
+  if (!g) g = startRound(1);
+  const t = Date.now(), G = clone(g);
+  let dirty = false;
+  if (G.phase === "hide" && t >= G.seekAt) { G.phase = "seek"; dirty = true; }
+  for (const id of livePlayers()) if (G.phase !== "over" && !G.roster.some((r) => r[0] === id)) { G.roster.push([id, nameOf(id), colorOf(id)]); G.seek.push(id); dirty = true; } // joined mid-round: a seeker
+  const all = people(G);
+  for (const c of all) { const l = host.lastPos.get(c.id); if (l && Math.hypot(l.x - c.x, l.z - c.z) > 0.02) host.moved.set(c.id, t); host.lastPos.set(c.id, { x: c.x, z: c.z }); }
+  botsTick(dt, G, all);
+  if (G.phase === "seek") dirty = judge(G, t, all) || dirty;
+  if (dirty) writeGame(G);
+  if (G.phase === "over" && (t >= G.endsAt || host.again)) startRound(G.id + 1);
+  host.again = false;
+  if (now - host.lastPub > 100) { host.lastPub = now; net.setShared("bots", JSON.stringify(botList())); } // ~10/s, one message for all bots
+}
+/** Squeaks, nobody left to seek or hide, the clock. */
+function judge(G, t, all) {
+  let dirty = false;
+  const hiders = all.filter((c) => !isSeeker(c.id, G));
+  if (!all.some((c) => isSeeker(c.id, G))) { // every seeker left: a hider (a bot if there is one) takes over
+    const pick = hiders.sort((a, b) => (b.bot ? 1 : 0) - (a.bot ? 1 : 0))[0];
+    if (pick) { G.seek.push(pick.id); dirty = true; }
+  }
+  if (t >= host.nextSqueak && hiders.length) { const h = hiders[Math.floor(Math.random() * hiders.length)]; G.sq = [h.id, t]; host.nextSqueak = t + CONFIG.squeakEvery; dirty = true; }
+  for (const id of Object.keys(G.stun)) if (G.stun[id] < t) { delete G.stun[id]; dirty = true; }
+  const left = all.filter((c) => !isSeeker(c.id, G)), P = CONFIG.points;
+  const end = (win) => { Object.assign(G, { phase: "over", win, endedAt: t, endsAt: t + CONFIG.overMs }); dirty = true; };
+  if (!left.length) end("seekers");
+  else if (t >= G.endsAt) { for (const c of left) G.pts[c.id] = (G.pts[c.id] || 0) + Math.floor(CONFIG.seekMs / 10000) * P.per10s + P.survive; end("hiders"); }
+  return dirty;
+}
+/** A "tag" intent (or the host's own / a bot's tap): a find if it's a hider, a miss if it's a real prop. */
+function applyTag(seekerId, target) {
+  const g = game(), t = Date.now();
+  if (!g || g.phase !== "seek" || !isSeeker(seekerId, g) || (g.stun[seekerId] || 0) > t || typeof target !== "string") return;
+  const all = people(g), seeker = all.find((c) => c.id === seekerId), decoy = DECOYS.find((d) => d.id === target), hider = !decoy && all.find((c) => c.id === target && !isSeeker(c.id, g));
+  const spot = decoy || hider;
+  if (!seeker || !spot || dist(seeker, spot) > CONFIG.reach + 1) return; // too far (the extra 1 is for lag)
+  const G = clone(g);
+  if (hider) {
+    G.found[hider.id] = t; G.seek.push(hider.id); G.stun[hider.id] = t + CONFIG.foundStunMs;
+    G.pts[seekerId] = (G.pts[seekerId] || 0) + CONFIG.points.find;
+    G.pts[hider.id] = (G.pts[hider.id] || 0) + Math.floor(Math.max(0, t - G.seekAt) / 10000) * CONFIG.points.per10s;
+  } else { G.stun[seekerId] = t + CONFIG.missStunMs; G.miss = [seekerId, target, t]; }
+  writeGame(G);
+}
+
+// ── BOTS ────────────────────────────────────────────────────────────────────────────
+// One brain for every bot (and, in ?attract, for your own player). Hiders pick a spot next to
+// props that look like them; seekers search room by room, and get suspicious of props that are
+// alone, that just moved, or that squeaked. Plausible, not perfect: they tag real props too.
+const STILL = { mx: 0, mz: 0 };
+const FLOOR = find((c) => c !== "#" && !CONFIG.furniture[c] && !CONFIG.props[c]); // every open cell, for seekers to wander to
+function botsTick(dt, G, all) {
+  const now = performance.now();
+  for (const b of host.bots.values()) {
+    const inp = canMove(b.id, G) ? (isSeeker(b.id, G) ? seekerInput(b, G, all, now) : hiderInput(b, G, all, now)) : STILL;
+    step(b, inp, dt, (isSeeker(b.id, G) ? CONFIG.seekerSpeed : CONFIG.hiderSpeed) * CONFIG.botPace, all, G);
+  }
+}
+function steer(b, goal, near = 0.25) {
+  if (!goal) return STILL;
+  if (b.path.length && dist(b, b.path[0]) < 0.4 && b.path.length > 1) b.path.shift();
+  const p = b.path[0] || goal, dx = p.x - b.x, dz = p.z - b.z, d = Math.hypot(dx, dz);
+  if (d < near && b.path.length <= 1) return STILL;
+  return { mx: dx / d, mz: dz / d };
+}
+function setGoal(b, goal) { b.goal = goal; b.path = goal ? route(b, goal) : []; }
+/** A good hiding spot: next to a decoy of some kind, clear of other props. 1 in 6 bots hides badly. */
+function pickSpot(b, G, all, awayFrom) {
+  const taken = [...DECOYS, ...all.filter((c) => c.id !== b.id && !isSeeker(c.id, G)), ...[...host.bots.values()].filter((o) => o !== b && o.spot).map((o) => o.spot)];
+  for (let tries = 0; tries < 40; tries++) {
+    const sloppy = Math.random() < 0.17, d = DECOYS[Math.floor(Math.random() * DECOYS.length)];
+    const a = Math.floor(Math.random() * 8) * (Math.PI / 4), r = sloppy ? 2.5 + Math.random() * 3 : 1.1 + Math.random() * 0.4;
+    const p = { x: d.x + Math.sin(a) * r, z: d.z + Math.cos(a) * r, k: sloppy ? KINDS[Math.floor(Math.random() * KINDS.length)] : d.k, h: Math.floor(Math.random() * 8) * (Math.PI / 4) };
+    if (wallAt(p.x - 0.5, p.z - 0.5) || wallAt(p.x + 0.5, p.z + 0.5) || wallAt(p.x + 0.5, p.z - 0.5) || wallAt(p.x - 0.5, p.z + 0.5)) continue;
+    if (taken.some((o) => dist(o, p) < 0.95) || (awayFrom && dist(awayFrom, p) < 6) || dist(p, SEEK_START) < 5) continue;
+    return p;
+  }
+  return { x: b.x, z: b.z, k: b.k, h: b.h };
+}
+function hiderInput(b, G, all, now) {
+  if (!b.spot) { b.spot = pickSpot(b, G, all); setGoal(b, b.spot); if (ATTRACT && G.phase === "hide") Object.assign(b, { x: b.spot.x, z: b.spot.z, path: [] }); }
+  b.k = b.spot.k;
+  if (now > b.think) {
+    b.think = now + 400 + Math.random() * 400;
+    const s = all.filter((c) => isSeeker(c.id, G) && !(G.stun[c.id] > Date.now() && G.found[c.id])).sort((p, q) => dist(p, b) - dist(q, b))[0];
+    if (G.phase === "seek" && s && dist(s, b) < 2.6 && canSee(s, b) && Math.random() < 0.1) { b.spot = pickSpot(b, G, all, s); setGoal(b, b.spot); } // panic: run for it (moving props look fishy)
+  }
+  const inp = steer(b, b.goal, 0.15);
+  if (inp === STILL && b.spot && dist(b, b.spot) < 0.3) b.h += angDiff(b.spot.h, b.h) * 0.2;
+  return inp;
+}
+function seekerInput(b, G, all, now) {
+  const t = Date.now();
+  if (now > b.think && !(G.stun[b.id] > t)) {
+    b.think = now + 450 + Math.random() * 350;
+    const tg = b.target && (DECOYS.find((d) => d.id === b.target) || all.find((c) => c.id === b.target && !isSeeker(c.id, G)));
+    if (tg && dist(b, tg) < CONFIG.reach * 0.75) { applyTag(b.id, b.target); b.target = ""; b.goal = null; b.think = now + 900; return STILL; }
+    if (tg) { if (!b.goal || dist(b.goal, tg) > 0.5) setGoal(b, { x: tg.x, z: tg.z }); }
+    else { b.target = ""; considerTargets(b, G, all, t); }
+    if (!b.target) {
+      const sq = G.sq && all.find((c) => c.id === G.sq[0] && !isSeeker(c.id, G));
+      if (sq && t - G.sq[1] < 3500 && !b.heard && dist(b, sq) < 16) { b.heard = G.sq[1]; setGoal(b, { x: sq.x + (Math.random() - 0.5) * 3, z: sq.z + (Math.random() - 0.5) * 3 }); b.wander = now + 5000; }
+      else if (!b.goal || dist(b, b.goal) < 1 || now > b.wander) { const far = FLOOR.filter((c) => dist(c, b) > 8); setGoal(b, far[Math.floor(Math.random() * far.length)] || FLOOR[0]); b.wander = now + 7000; }
+    }
+  }
+  b.heard = G.sq && b.heard === G.sq[1] ? b.heard : 0;
+  return G.stun[b.id] > t ? STILL : steer(b, b.goal, b.target ? CONFIG.reach * 0.6 : 0.3);
+}
+/** Look at the props nearby: real hiders draw suspicion (more if alone, moving or squeaky); decoys only now and then. */
+function considerTargets(b, G, all, t) {
+  const k = ATTRACT ? 5 : 1; // ?attract: busier seekers for the preview
+  for (const c of all) {
+    if (isSeeker(c.id, G) || dist(b, c) > 6 || !canSee(b, c)) continue;
+    const alone = !DECOYS.some((d) => d.k === c.k && dist(d, c) < 3.5), moved = t - (host.moved.get(c.id) || 0) < 1500, squeaked = G.sq && G.sq[0] === c.id && t - G.sq[1] < 4000;
+    const p = (0.02 + (alone ? 0.06 : 0) + (moved ? 0.4 : 0) + (squeaked ? 0.3 : 0)) * (dist(b, c) < 3 ? 1.5 : 1) * k;
+    if (Math.random() < p) { b.target = c.id; setGoal(b, { x: c.x, z: c.z }); return; }
+  }
+  for (const d of DECOYS) if (dist(b, d) < 4.5 && Math.random() < 0.012 * Math.min(k, 2.5) && canSee(b, d)) { b.target = d.id; setGoal(b, { x: d.x, z: d.z }); return; }
+}
+/** One movement step (yours or a bot's), bumping into walls, furniture and every prop but yourself. */
+function step(b, inp, dt, speed, all, G) {
+  const len = Math.hypot(inp.mx, inp.mz);
+  b.mv = len > 0.1;
+  if (!b.mv) return;
+  const mx = inp.mx / Math.max(1, len), mz = inp.mz / Math.max(1, len);
+  const circles = DECOYS.map((d) => ({ x: d.x, z: d.z, r: CONFIG.props[d.k].r })).concat(all.filter((c) => c.id !== b.id && !isSeeker(c.id, G)).map((c) => ({ x: c.x, z: c.z, r: CONFIG.props[c.k]?.r || 0.4 })));
+  moveBody(b, mx * speed * dt, mz * speed * dt, R, circles);
+  b.h += angDiff(Math.atan2(mx, mz), b.h) * Math.min(1, dt * 10);
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+const FRIENDLY = ["Zippy", "Sunny", "Sneaky", "Lucky", "Quiet", "Comfy"], CRITTERS = ["Otter", "Fox", "Mouse", "Panda", "Gecko", "Koala"];
+const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() || FRIENDLY[Math.floor(Math.random() * 6)] + " " + CRITTERS[Math.floor(Math.random() * 6)];
+let myColor = COLORS[0]; // picked on join: the first color nobody in the room has
+const me = { ...newBody(), id: "", gameId: -1, lastSend: 0, sent: "", hint: "", hintUntil: 0, playAt: 0 };
+const nameOf = (id) => (id === net.sessionId ? myName : isBot(id) ? host.bots.get(id)?.name || botList().find((b) => b.i === id)?.n || "Bot" : S.entities.players[id]?.n || "Player");
+const colorOf = (id) => (id === net.sessionId ? myColor : isBot(id) ? host.bots.get(id)?.color || "#ccc" : S.entities.players[id]?.c || "#ccc");
+
+function myTick(dt, g, now) {
+  if (me.gameId !== g.id) { me.gameId = g.id; Object.assign(me, newBody(), spawnFor(net.sessionId, g)); $("over").hidden = true; }
+  const seeker = isSeeker(net.sessionId, g), all = people(g);
+  if (seeker && !me.wasSeeker && g.phase === "hide") Object.assign(me, spawnFor(net.sessionId, g)); // joined mid-hide: off to the seekers' corner
+  me.wasSeeker = seeker;
+  let inp = STILL;
+  if (canMove(net.sessionId, g)) inp = ATTRACT ? (seeker ? seekerInput(me, g, all, now) : hiderInput(me, g, all, now)) : readInput();
+  step(me, inp, dt, seeker ? CONFIG.seekerSpeed : CONFIG.hiderSpeed, all, g);
+  const r1 = (v) => Math.round(v * 100) / 100, p = JSON.stringify({ g: g.id, x: r1(me.x), z: r1(me.z), h: r1(me.h), k: me.k, m: me.mv ? 1 : 0 });
+  if ((p !== me.sent && now - me.lastSend > 95) || now - me.lastSend > 3000) { me.lastSend = now; me.sent = p; net.me.set("p", p); } // ~10/s while moving
+}
+const say = (text, ms = 1600) => { me.hint = text; me.hintUntil = performance.now() + ms; };
+/** Tap or click on a prop: a seeker tags it; a hider turns into that kind of prop (and copies its turn). */
+function actOn(pid) {
+  const g = game(); if (!g || pid === net.sessionId) return;
+  const spot = DECOYS.find((d) => d.id === pid) || people(g).find((c) => c.id === pid);
+  if (!spot) return;
+  if (isSeeker(net.sessionId, g)) {
+    if (g.phase !== "seek") return;
+    if ((g.stun[net.sessionId] || 0) > Date.now()) return say("Still seeing stars…");
+    if (dist(me, spot) > CONFIG.reach) return say("Get closer to tag it");
+    if (isHost()) applyTag(net.sessionId, pid); else net.send("tag", { t: pid });
+    sound("tap");
+  } else if (g.phase !== "over" && !isSeeker(pid, g)) {
+    me.k = spot.k; me.h = spot.h; sound("poof"); burst(me.x, 0.8, me.z, ["#ffffff", "#ffe08a"], 12, 4);
+  }
+}
+function changeProp(stepBy) { const g = game(); if (!g || isSeeker(net.sessionId, g)) return; me.k = KINDS[(KINDS.indexOf(me.k) + stepBy + KINDS.length) % KINDS.length]; sound("poof"); burst(me.x, 0.8, me.z, ["#ffffff", "#ffe08a"], 12, 4); }
+function turnProp() { const g = game(); if (!g || isSeeker(net.sessionId, g)) return; me.h += Math.PI / 4; }
+/** TAG button / Space: tag the nearest prop in front of you. */
+function tagAhead() {
+  const g = game(); if (!g) return;
+  const fx = Math.sin(me.h), fz = Math.cos(me.h);
+  const cands = [...DECOYS, ...people(g).filter((c) => !c.mine && !isSeeker(c.id, g))].filter((c) => dist(me, c) < CONFIG.reach && ((c.x - me.x) * fx + (c.z - me.z) * fz) / Math.max(0.01, dist(me, c)) > 0.3);
+  const best = cands.sort((a, b) => dist(a, me) - dist(b, me))[0];
+  if (best) actOn(best.id); else say("Nothing to tag in front of you");
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const fmt = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
+let board = null, boardFor = -1, reconnecting = false;
+function hud(g) {
+  const t = Date.now(), seeker = isSeeker(net.sessionId, g), found = !!g.found[net.sessionId], all = people(g);
+  $("blind").hidden = !(seeker && g.phase === "hide") || ATTRACT;
+  if (!$("blind").hidden) $("blind").innerHTML = `Eyes shut… ${Math.max(1, Math.ceil((g.seekAt - t) / 1000))}<small>The hiders are turning into props. Find every fake one!</small>`;
+  if (ATTRACT) { for (const id of ["round", "role", "big", "msg", "net"]) $(id).textContent = ""; return; }
+  const hiders = all.filter((c) => !isSeeker(c.id, g)).length, seekers = all.length - hiders;
+  $("round").innerHTML = g.phase === "over" ? "" : `${g.phase === "hide" ? "Hide! " + Math.max(0, Math.ceil((g.seekAt - t) / 1000)) : fmt(Math.max(0, g.endsAt - t))}<small>${"📦".repeat(hiders)} ${"🔍".repeat(seekers)}</small>`;
+  $("role").classList.toggle("seeker", seeker); $("role").classList.toggle("hider", !seeker);
+  $("role").textContent = g.phase === "over" ? "" : seeker ? (found ? "🔍 Found! Now you SEEK" : "🔍 You're a SEEKER") : `📦 You're a ${CONFIG.props[me.k].name.toUpperCase()}`;
+  $("big").innerHTML = g.phase === "seek" && t - g.seekAt < 1500 ? "<div>Ready or not!</div>" : "";
+  let msg = performance.now() < me.hintUntil ? me.hint : "";
+  if (!msg && g.phase !== "over") {
+    if (!me.playAt) me.playAt = t;
+    const early = t - me.playAt < 12000;
+    if (seeker && (g.stun[net.sessionId] || 0) > t) msg = found ? "You were found! Help find the others…" : "Bonk! That was a real one.";
+    else if (seeker) msg = early || g.phase === "hide" ? (touchUI ? "Walk with your thumb · tap a prop (or TAG) to check it" : "WASD to walk · click a prop to tag it (wrong guesses stun you)") : "Listen for squeaks and watch for props that move";
+    else msg = early ? (touchUI ? "Tap a prop to become one · CHANGE · TURN · stand still near look-alikes" : "Click a prop to become one · Q changes · R turns · stand still near look-alikes") : g.phase === "hide" ? "Find a spot next to props like you" : "Stay still… moving props look fishy";
+  }
+  $("msg").textContent = msg;
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : reconnecting ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the round" : ""}`;
+  for (const b of document.querySelectorAll(".pad button")) b.hidden = (b.dataset.k === "tag") !== seeker;
+  document.querySelector('[data-k="tag"]').classList.toggle("wait", (g.stun[net.sessionId] || 0) > t);
+  const over = g.phase === "over" && t - g.endedAt > 1500;
+  $("over").hidden = !over;
+  if (over) results(g, t);
+}
+function results(g, t) {
+  const mine = g.pts[net.sessionId] || 0, inRound = g.roster.some((r) => r[0] === net.sessionId), wasHider = !g.seek0.includes(net.sessionId);
+  const won = inRound && ((g.win === "hiders" && wasHider && !g.found[net.sessionId]) || (g.win === "seekers" && (!wasHider || g.found[net.sessionId])));
+  $("overTitle").textContent = g.win === "hiders" ? "Hiders win! Some props were people" : g.win === "seekers" ? "Seekers win! Every fake found" : "Round over";
+  $("overLine").textContent = inRound ? `You scored ${mine} point${mine === 1 ? "" : "s"}${won ? " and your side won" : ""}.` : "You'll join the next round.";
+  const rows = g.roster.map(([id, name]) => ({ id, name: S.entities.players[id]?.n || name, pts: g.pts[id] || 0, tag: g.found[id] ? "📦→🔍 " : g.seek.includes(id) ? "🔍 " : "📦 " })).sort((a, b) => b.pts - a.pts).slice(0, 10);
+  $("results").innerHTML = rows.map((r) => `<li class="${r.id === net.sessionId ? "me" : ""}">${r.tag}${esc(r.id === net.sessionId ? "You" : r.name)}<span>${r.pts}</span></li>`).join("");
+  $("next").textContent = `Next round in ${Math.max(0, Math.ceil((g.endsAt - t) / 1000))}s`;
+  if (boardFor !== g.id) { boardFor = g.id; showBoard(inRound && me.gameId === g.id ? mine : 0); }
+}
+function showBoard(score) {
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (score > 0 ? board.submit(score).catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} pts</span></li>`).join("") : "<li>No scores yet. Set the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+/** Keep a color nobody else has: the later sessionId gives way, and the bots' colors count as taken. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId), bots = botList().map((b) => b.c);
+  if (!others.some(([id, p]) => id < net.sessionId && p.c === myColor) && !bots.includes(myColor)) return;
+  const used = new Set([...others.map(([, p]) => p.c), ...bots]), free = COLORS.find((c) => !used.has(c));
+  if (!free || free === myColor) return;
+  myColor = free; net.me.set("c", myColor); dropView(net.sessionId);
+}
+$("again").onclick = () => { const g = game(); if (!g || g.phase !== "over") return; if (isHost()) host.again = true; else net.send("again", {}); $("over").hidden = true; };
+
+/** One-off effects worked out from what changed in state (so nobody misses one). */
+let prevG = null;
+function effects(g, all) {
+  if (prevG && prevG.id === g.id) {
+    const at = (id) => all.find((c) => c.id === id) || DECOYS.find((d) => d.id === id);
+    for (const id of Object.keys(g.found)) if (!prevG.found[id]) {
+      const c = at(id); if (c) { burst(c.x, 1, c.z, COLORS, 44, 8); floatText(id === net.sessionId && !ATTRACT ? "FOUND YOU!" : "FOUND!", c.x, 2.4, c.z, "#ffe08a", 1.4); }
+      sound("found"); if (id === net.sessionId) shake = 0.4;
+    }
+    if (g.miss && (!prevG.miss || g.miss[2] !== prevG.miss[2])) {
+      const c = at(g.miss[1]); if (c) { burst(c.x, 0.9, c.z, ["#ffffff", "#d8d0c0"], 10, 3); floatText(`just a ${CONFIG.props[c.k]?.name || "prop"}`, c.x, 2, c.z, "#ffffff", 0.9); }
+      sound("bonk");
+    }
+    if (g.sq && (!prevG.sq || g.sq[1] !== prevG.sq[1])) { const c = at(g.sq[0]); if (c) { floatText("♪ squeak!", c.x, 2, c.z, "#9fe8ff", 1); sound("squeak", c); } }
+    if (g.phase === "seek" && prevG.phase === "hide") sound("go");
+    if (g.phase === "over" && prevG.phase !== "over") sound("end");
+  }
+  prevG = g;
+}
+
+// ── INPUT & SOUND ───────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("pad").hidden = !touchUI;
+if (touchUI) $("msg").style.bottom = "calc(max(18px, env(safe-area-inset-bottom)) + 112px)";
+const keys = new Set(), stick = { id: -1, ox: 0, oy: 0, mx: 0, mz: 0, at: 0, moved: 0 }, mouse = { down: false, nx: 0, ny: 0 };
+addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase(); keys.add(k); unlockAudio();
+  if (e.repeat) return;
+  if (k === "q") changeProp(1);
+  if (k === "r") turnProp();
+  if (k === " " || k === "e") { e.preventDefault(); tagAhead(); }
+});
+addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => { keys.clear(); mouse.down = false; });
+const ray = new THREE.Raycaster(), floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hitPt = new THREE.Vector3();
+/** The prop under a screen point, through the camera that drew the frame (or ""). */
+function pickAt(cx, cy) {
+  ray.setFromCamera({ x: (cx / innerWidth) * 2 - 1, y: -(cy / innerHeight) * 2 + 1 }, camera);
+  for (const h of ray.intersectObjects(pickables, true)) { let o = h.object; while (o && !o.userData.pid) o = o.parent; if (o && o.visible) return o.userData.pid; }
+  return "";
+}
+function readInput() {
+  const k = (a, b) => (keys.has(a) || keys.has(b) ? 1 : 0);
+  let mx = k("d", "arrowright") - k("a", "arrowleft") + stick.mx, mz = k("s", "arrowdown") - k("w", "arrowup") + stick.mz;
+  if (!mx && !mz && mouse.down) { // walk toward the floor point under the pointer
+    ray.setFromCamera({ x: mouse.nx, y: mouse.ny }, camera);
+    if (ray.ray.intersectPlane(floorPlane, hitPt)) { const dx = hitPt.x - me.x, dz = hitPt.z - me.z, d = Math.hypot(dx, dz); if (d > 0.4) { mx = dx / d; mz = dz / d; } }
+  }
+  return { mx, mz };
+}
+const cv = renderer.domElement;
+cv.addEventListener("contextmenu", (e) => e.preventDefault());
+cv.addEventListener("pointerdown", (e) => {
+  e.preventDefault(); unlockAudio();
+  if (e.pointerType === "mouse") { const pid = pickAt(e.clientX, e.clientY); if (pid) actOn(pid); else { mouse.down = true; mouse.nx = (e.clientX / innerWidth) * 2 - 1; mouse.ny = -(e.clientY / innerHeight) * 2 + 1; } return; }
+  if (stick.id >= 0) return;
+  cv.setPointerCapture(e.pointerId);
+  Object.assign(stick, { id: e.pointerId, ox: e.clientX, oy: e.clientY, mx: 0, mz: 0, at: performance.now(), moved: 0 });
+  Object.assign($("stick").style, { left: e.clientX + "px", top: e.clientY + "px" }); $("stick").hidden = false;
+});
+cv.addEventListener("pointermove", (e) => {
+  if (e.pointerType === "mouse") { mouse.nx = (e.clientX / innerWidth) * 2 - 1; mouse.ny = -(e.clientY / innerHeight) * 2 + 1; }
+  if (e.pointerId !== stick.id) return;
+  const dx = e.clientX - stick.ox, dy = e.clientY - stick.oy, d = Math.hypot(dx, dy), k = Math.min(1, d / 50) / (d || 1);
+  stick.moved = Math.max(stick.moved, d); stick.mx = dx * k; stick.mz = dy * k;
+  $("stick").firstElementChild.style.transform = `translate(${stick.mx * 35}px, ${stick.mz * 35}px)`;
+});
+for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => {
+  if (e.pointerType === "mouse") mouse.down = false;
+  if (e.pointerId !== stick.id) return;
+  if (ev === "pointerup" && stick.moved < 12 && performance.now() - stick.at < 350) { const pid = pickAt(e.clientX, e.clientY); if (pid) actOn(pid); } // a tap, not a drag
+  Object.assign(stick, { id: -1, mx: 0, mz: 0 }); $("stick").hidden = true;
+});
+for (const b of document.querySelectorAll(".pad button")) b.addEventListener("pointerdown", (e) => {
+  e.preventDefault(); unlockAudio();
+  if (b.dataset.k === "change") changeProp(1); else if (b.dataset.k === "turn") turnProp(); else tagAhead();
+});
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+let AC = null;
+function unlockAudio() { if (!AC && !ATTRACT) try { AC = new AudioContext(); } catch {} }
+function sound(kind, from) {
+  if (!AC) return;
+  const vol = from ? Math.max(0.15, 1 - dist(me, from) / 24) : 1;
+  const t0 = AC.currentTime, tone = (f, d, type, v, f2, delay = 0) => {
+    const o = AC.createOscillator(), g = AC.createGain(); o.type = type; o.frequency.setValueAtTime(f, t0 + delay); o.frequency.exponentialRampToValueAtTime(f2, t0 + delay + d);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.setValueAtTime(v * vol, t0 + delay); g.gain.exponentialRampToValueAtTime(0.001, t0 + delay + d); o.connect(g).connect(AC.destination); o.start(t0); o.stop(t0 + delay + d);
+  };
+  if (kind === "squeak") { tone(1400, 0.09, "sine", 0.16, 2200); tone(1800, 0.12, "sine", 0.14, 2600, 0.12); }
+  if (kind === "found") { tone(523, 0.15, "square", 0.08, 523); tone(659, 0.15, "square", 0.08, 659, 0.1); tone(1046, 0.3, "square", 0.08, 1046, 0.2); }
+  if (kind === "bonk") tone(180, 0.2, "triangle", 0.2, 90);
+  if (kind === "tap") tone(800, 0.05, "square", 0.05, 600);
+  if (kind === "poof") tone(500, 0.18, "sine", 0.1, 1200);
+  if (kind === "go") tone(440, 0.4, "sawtooth", 0.06, 880);
+  if (kind === "end") { tone(392, 0.3, "triangle", 0.12, 392); tone(523, 0.5, "triangle", 0.12, 523, 0.2); }
+}
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0, shake = 0;
+const camLook = new THREE.Vector3(), camGoal = new THREE.Vector3();
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)), t = now / 1000; last = now;
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (isHost()) hostTick(dt, now); else host.was = false;
+  const g = game();
+  if (!g) { renderer.render(scene, camera); return requestAnimationFrame(frame); }
+  myTick(dt, g, now);
+  const all = people(g);
+  effects(g, all);
+  drawPeople(g, all, now, t);
+  drawParts(dt); drawFloaters(dt);
+  moveCamera(g, all, dt);
+  renderer.render(scene, camera);
+  if (now - lastHud > 100) { lastHud = now; hud(g); }
+  requestAnimationFrame(frame);
+}
+// Drawing: other players and (on non-hosts) bots arrive ~10 times a second; they are drawn LAG ms in
+// the past, between the two updates around that moment, so they glide instead of stepping.
+const LAG = 150, tracks = new Map(), views = new Map(); // id -> { kid, prop, kind, tag, tagFor }
+function feed(id, raw, s, now) {
+  let tr = tracks.get(id);
+  if (!tr) { tr = { raw: null, buf: [] }; tracks.set(id, tr); }
+  if (tr.raw === raw) return tr;
+  tr.raw = raw;
+  const last = tr.buf[tr.buf.length - 1];
+  if (last && Math.hypot(last.x - s.x, last.z - s.z) > 5) tr.buf.length = 0; // a jump (a new round): no sliding across the house
+  tr.buf.push({ at: now, x: s.x, z: s.z, h: s.h });
+  if (tr.buf.length > 10) tr.buf.shift();
+  return tr;
+}
+function sample(tr, now) {
+  const b = tr.buf, t = now - LAG;
+  if (b.length === 1 || t <= b[0].at) return b[0];
+  for (let i = b.length - 1; i > 0; i--) {
+    if (b[i - 1].at > t) continue;
+    const p = b[i - 1], q = b[i];
+    if (t >= q.at) return q;
+    const k = (t - p.at) / Math.max(1, q.at - p.at);
+    return { x: p.x + (q.x - p.x) * k, z: p.z + (q.z - p.z) * k, h: p.h + angDiff(q.h, p.h) * k };
+  }
+  return b[b.length - 1];
+}
+function dropView(id) { const v = views.get(id); if (!v) return; dropProp(v.prop); if (v.kid) scene.remove(v.kid.g); if (v.tag) scene.remove(v.tag); views.delete(id); }
+const youRing = new THREE.Mesh(new THREE.RingGeometry(0.85, 0.95, 36).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.7, depthWrite: false }));
+youRing.position.y = 0.03; scene.add(youRing);
+function drawPeople(g, all, now, t) {
+  const seen = new Set(), iSeek = isSeeker(net.sessionId, g), td = Date.now();
+  const draw = (id, c, s) => {
+    let v = views.get(id);
+    if (!v) { v = { kid: null, prop: null, kind: "", tag: null, tagFor: "" }; views.set(id, v); }
+    seen.add(id);
+    const seeker = isSeeker(id, g) && !(g.found[id] && (g.stun[id] || 0) > td); // a found hider stays a prop for a moment, then pops out
+    if (seeker) {
+      if (v.prop) { dropProp(v.prop); v.prop = null; v.kind = ""; }
+      if (v.kid && v.kid.color !== c.color) { scene.remove(v.kid.g); v.kid = null; } // they picked a new color
+      if (!v.kid) { v.kid = makeKid(c.color); v.kid.color = c.color; }
+      v.kid.g.position.set(s.x, 0, s.z); v.kid.g.rotation.y = s.h; poseKid(v.kid, c.mv, (g.stun[id] || 0) > td, t);
+    } else {
+      if (v.kid) { scene.remove(v.kid.g); v.kid = null; }
+      if (v.kind !== c.k) { dropProp(v.prop); v.prop = makeProp(c.k, id); v.kind = c.k; }
+      v.prop.position.set(s.x, 0, s.z); v.prop.rotation.y = s.h;
+      v.prop.position.y = g.phase === "over" ? Math.abs(Math.sin(t * 6 + s.x)) * 0.3 : 0; // the reveal: every hider hops
+    }
+    // Name tags: seekers always; hiders only for their own team (and everyone at the reveal).
+    const label = ATTRACT || c.mine ? "" : seeker || g.phase === "over" || !iSeek ? c.name : "";
+    if (v.tagFor !== label) { if (v.tag) scene.remove(v.tag); v.tag = label ? nameTag(label, seeker ? "#fff" : "#9fffc2") : null; if (v.tag) scene.add(v.tag); v.tagFor = label; }
+    if (v.tag) v.tag.position.set(s.x, seeker ? 2.7 : 2.2, s.z);
+  };
+  const live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === net.sessionId || !live.has(id)) continue;
+    const c = all.find((o) => o.id === id); if (!c) continue;
+    draw(id, c, sample(feed(id, p.p, c, now), now));
+  }
+  const raw = S.shared.bots;
+  for (const c of all.filter((o) => o.bot)) draw(c.id, c, isHost() ? c : sample(feed(c.id, raw, c, now), now));
+  draw(net.sessionId, all.find((o) => o.mine), me);
+  for (const id of [...views.keys()]) if (!seen.has(id)) { dropView(id); tracks.delete(id); }
+  youRing.visible = !ATTRACT; youRing.position.set(me.x, 0.03, me.z); youRing.scale.setScalar(1 + Math.sin(t * 4) * 0.06);
+}
+/** High and behind you (higher on a tall phone). ?attract follows the first seeker. */
+function moveCamera(g, all, dt) {
+  let f = me;
+  if (ATTRACT) f = all.find((c) => c.id === g.seek0[0]) || me;
+  const tall = camera.aspect < 1, hgt = ATTRACT ? 13 : tall ? 22 : 15, back = ATTRACT ? 6 : 10;
+  camGoal.set(f.x, 0, f.z);
+  camLook.lerp(camGoal, 1 - Math.pow(ATTRACT ? 0.08 : 0.004, dt));
+  shake = Math.max(0, shake - dt);
+  camera.position.set(camLook.x + (Math.random() - 0.5) * shake, hgt, camLook.z + back + (Math.random() - 0.5) * shake);
+  camera.lookAt(camLook.x, 0, camLook.z - 0.5);
+}
+
+(async function start() {
+  net = await connect();
+  me.id = net.sessionId;
+  net.onState((st) => { S = st; });
+  net.on("tag", (m, from) => { if (isHost() && m) applyTag(from, m.t); });
+  net.on("again", () => { const g = game(); if (isHost() && g && g.phase === "over") host.again = true; });
+  net.onDisconnect(() => { reconnecting = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { reconnecting = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set(Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c));
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  camLook.set(HIDE_START.x, 0, HIDE_START.z);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
