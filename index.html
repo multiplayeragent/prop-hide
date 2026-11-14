@@ -27,6 +27,7 @@
   .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
   .card li span { float: right; font-variant-numeric: tabular-nums; }
   .card li.me { color: #ffe08a; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -24px; opacity: .8; } /* a message in place of a list: no "1." in front of it */
   .card p { margin: 6px 0 0; font-size: 14px; opacity: .9; }
   button.go { margin-top: 16px; width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffe08a; color: #3a2418; font: 800 17px system-ui, sans-serif; cursor: pointer; }
   #stick { position: fixed; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: #ffffff22; border: 2px solid #ffffff88; pointer-events: none; }
@@ -50,7 +51,7 @@
 <div id="over" hidden><div class="card">
   <h2 id="overTitle"></h2><p id="overLine"></p>
   <h3>This round</h3><ol id="results"></ol>
-  <h3>Best rounds</h3><ol id="board"><li>Loading…</li></ol>
+  <h3>Best rounds</h3><ol id="board"><li class="note">Loading…</li></ol>
   <button class="go" id="again">Play again</button>
   <p id="next"></p>
 </div></div>
@@ -224,6 +225,7 @@ function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t 
 const SEEK_START = find((c) => c === "S")[0], HIDE_START = find((c) => c === "H")[0];
 // The decoys: real props that belong to the house. Same spots and turns on every client (a fixed seed).
 const DECOYS = (() => { const r = mulberry32(7); return find((c) => !!CONFIG.props[c]).map((d, i) => ({ id: "d" + i, k: d.ch, x: d.x + (r() - 0.5) * 0.6, z: d.z + (r() - 0.5) * 0.6, h: Math.floor(r() * 8) * (Math.PI / 4) })); })();
+const PROP_CELLS = new Set(DECOYS.map((d) => toCell(d.x) + toCell(d.z) * MW)); // cells bots walk round (see route)
 const wallAt = (x, z) => solid(toCell(x), toCell(z));
 /** Move a body ({x, z}), sliding along walls and furniture and pushed out of props (`circles`). */
 function moveBody(o, dx, dz, r, circles) {
@@ -242,10 +244,12 @@ function canSee(a, b) {
   return true;
 }
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
-/** A walkable route from a to b as cell centres (ending at b), or [] if there is none. */
-function route(a, b) {
+/** A walkable route from a to b as cell centres (ending at b), or [] if there is none. It goes round the
+ *  cells that hold a decoy prop when it can (walking through one, a bot would push against the prop forever). */
+function route(a, b) { return findRoute(a, b, true) || findRoute(a, b, false) || []; }
+function findRoute(a, b, avoidProps) {
   const sx = toCell(a.x), sz = toCell(a.z), gx = toCell(b.x), gz = toCell(b.z), goal = gx + gz * MW;
-  if (solid(gx, gz)) return [];
+  if (solid(gx, gz)) return null;
   const prev = new Int32Array(MW * MH).fill(-1), q = [sx + sz * MW];
   prev[q[0]] = q[0];
   for (let h = 0; h < q.length && prev[goal] < 0; h++) {
@@ -253,10 +257,11 @@ function route(a, b) {
     for (const [dx, dz] of DIRS) {
       const nx = x + dx, nz = z + dz, n = nx + nz * MW;
       if (solid(nx, nz) || prev[n] >= 0 || (dx && dz && (solid(x + dx, z) || solid(x, z + dz)))) continue;
+      if (avoidProps && n !== goal && PROP_CELLS.has(n)) continue;
       prev[n] = k; q.push(n);
     }
   }
-  if (prev[goal] < 0) return [];
+  if (prev[goal] < 0) return null;
   const out = [{ x: b.x, z: b.z }];
   for (let k = prev[goal]; k !== prev[k]; k = prev[k]) out.unshift(center(k % MW, (k / MW) | 0));
   return out;
@@ -534,7 +539,17 @@ function botsTick(dt, G, all) {
   for (const b of host.bots.values()) {
     const inp = canMove(b.id, G) ? (isSeeker(b.id, G) ? seekerInput(b, G, all, now) : hiderInput(b, G, all, now)) : STILL;
     step(b, inp, dt, (isSeeker(b.id, G) ? CONFIG.seekerSpeed : CONFIG.hiderSpeed) * CONFIG.botPace, all, G);
+    unstick(b, G, all, now);
   }
+}
+/** A bot that keeps walking but gets nowhere (pressed against a prop, a wall or another hider) gives up on that goal. */
+function unstick(b, G, all, now) {
+  if (!b.mv || b.sx == null || Math.hypot(b.x - b.sx, b.z - b.sz) > 0.3) { b.sx = b.x; b.sz = b.z; b.stuckAt = now; return; }
+  if (now - b.stuckAt < 1200) return;
+  b.sx = b.x; b.sz = b.z; b.stuckAt = now; b.target = "";
+  if (isSeeker(b.id, G)) { const near = FLOOR.filter((c) => dist(c, b) > 3 && dist(c, b) < 12); setGoal(b, near[Math.floor(Math.random() * near.length)] || FLOOR[0]); b.wander = now + 7000; }
+  else if (b.spot && dist(b, b.spot) < 1.5) { b.spot = { ...b.spot, x: b.x, z: b.z }; setGoal(b, b.spot); } // close enough: hide right here
+  else { b.spot = pickSpot(b, G, all); setGoal(b, b.spot); }
 }
 function steer(b, goal, near = 0.25) {
   if (!goal) return STILL;
@@ -624,6 +639,7 @@ function myTick(dt, g, now) {
   let inp = STILL;
   if (canMove(net.sessionId, g)) inp = ATTRACT ? (seeker ? seekerInput(me, g, all, now) : hiderInput(me, g, all, now)) : readInput();
   step(me, inp, dt, seeker ? CONFIG.seekerSpeed : CONFIG.hiderSpeed, all, g);
+  if (ATTRACT) unstick(me, g, all, now);
   const r1 = (v) => Math.round(v * 100) / 100, p = JSON.stringify({ g: g.id, x: r1(me.x), z: r1(me.z), h: r1(me.h), k: me.k, m: me.mv ? 1 : 0 });
   if ((p !== me.sent && now - me.lastSend > 95) || now - me.lastSend > 3000) { me.lastSend = now; me.sent = p; net.me.set("p", p); } // ~10/s while moving
 }
@@ -698,11 +714,11 @@ function results(g, t) {
 }
 function showBoard(score) {
   const list = $("board");
-  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading…</li>";
+  if (!board) { list.innerHTML = `<li class="note">Leaderboards need a connection.</li>`; return; }
+  list.innerHTML = `<li class="note">Loading…</li>`;
   (score > 0 ? board.submit(score).catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} pts</span></li>`).join("") : "<li>No scores yet. Set the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} pts</span></li>`).join("") : `<li class="note">No scores yet. Set the first.</li>`;
+  }).catch(() => { list.innerHTML = `<li class="note">Couldn't load the leaderboard.</li>`; });
 }
 /** Keep a color nobody else has: the later sessionId gives way, and the bots' colors count as taken. */
 function fixColor() {
@@ -737,7 +753,7 @@ function effects(g, all) {
 // ── INPUT & SOUND ───────────────────────────────────────────────────────────────────
 const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
 $("pad").hidden = !touchUI;
-if (touchUI) $("msg").style.bottom = "calc(max(18px, env(safe-area-inset-bottom)) + 112px)";
+if (touchUI) { $("msg").style.bottom = "calc(max(18px, env(safe-area-inset-bottom)) + 118px)"; $("net").style.bottom = "calc(max(22px, env(safe-area-inset-bottom)) + 86px)"; } // both above the buttons
 const keys = new Set(), stick = { id: -1, ox: 0, oy: 0, mx: 0, mz: 0, at: 0, moved: 0 }, mouse = { down: false, nx: 0, ny: 0 };
 addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase(); keys.add(k); unlockAudio();
@@ -781,7 +797,7 @@ cv.addEventListener("pointermove", (e) => {
   stick.moved = Math.max(stick.moved, d); stick.mx = dx * k; stick.mz = dy * k;
   $("stick").firstElementChild.style.transform = `translate(${stick.mx * 35}px, ${stick.mz * 35}px)`;
 });
-for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => {
+for (const ev of ["pointerup", "pointercancel"]) addEventListener(ev, (e) => { // on the window: letting go of the mouse over the results card or outside the page still stops you
   if (e.pointerType === "mouse") mouse.down = false;
   if (e.pointerId !== stick.id) return;
   if (ev === "pointerup" && stick.moved < 12 && performance.now() - stick.at < 350) { const pid = pickAt(e.clientX, e.clientY); if (pid) actOn(pid); } // a tap, not a drag
