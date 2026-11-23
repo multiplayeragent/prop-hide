@@ -470,7 +470,7 @@ function people(G) {
   for (const [id, p] of Object.entries(S.entities.players || {})) {
     if (id === net.sessionId) { out.push({ id, name: myName, color: myColor, x: me.x, z: me.z, h: me.h, k: me.k, mv: me.mv, mine: true }); continue; }
     const q = posOf(id, p);
-    if (live.has(id) && q && (!G || q.g === G.id)) out.push({ id, name: p.n || "Player", color: p.c || "#ccc", x: q.x, z: q.z, h: q.h, k: q.k || "c", mv: !!q.m });
+    if (live.has(id) && q && (!G || q.g === G.id)) out.push({ id, name: nameOf(id), color: p.c || "#ccc", x: q.x, z: q.z, h: q.h, k: Object.hasOwn(CONFIG.props, q.k) ? q.k : "c", mv: !!q.m }); // an unknown prop kind would break drawing
   }
   const bots = isHost() ? [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: b.x, z: b.z, h: b.h, k: b.k, m: b.mv })) : botList();
   for (const b of bots) out.push({ id: b.i, name: b.n, color: b.c, x: b.x, z: b.z, h: b.h, k: b.k, mv: !!b.m, bot: true });
@@ -628,8 +628,8 @@ const FRIENDLY = ["Zippy", "Sunny", "Sneaky", "Lucky", "Quiet", "Comfy"], CRITTE
 const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() || FRIENDLY[Math.floor(Math.random() * 6)] + " " + CRITTERS[Math.floor(Math.random() * 6)];
 let myColor = COLORS[0]; // picked on join: the first color nobody in the room has
 const me = { ...newBody(), id: "", gameId: -1, lastSend: 0, sent: "", hint: "", hintUntil: 0, playAt: 0 };
-const nameOf = (id) => (id === net.sessionId ? myName : isBot(id) ? host.bots.get(id)?.name || botList().find((b) => b.i === id)?.n || "Bot" : S.entities.players[id]?.n || "Player");
-const colorOf = (id) => (id === net.sessionId ? myColor : isBot(id) ? host.bots.get(id)?.color || "#ccc" : S.entities.players[id]?.c || "#ccc");
+const nameOf = (id) => String(id === net.sessionId ? myName : isBot(id) ? host.bots.get(id)?.name || botList().find((b) => b.i === id)?.n || "Bot" : S.entities.players[id]?.n || "Player").slice(0, 16); // short: names go into the shared round state
+const colorOf = (id) => String(id === net.sessionId ? myColor : isBot(id) ? host.bots.get(id)?.color || "#ccc" : S.entities.players[id]?.c || "#ccc").slice(0, 9);
 
 function myTick(dt, g, now) {
   if (me.gameId !== g.id) { me.gameId = g.id; Object.assign(me, newBody(), spawnFor(net.sessionId, g)); $("over").hidden = true; }
@@ -707,7 +707,7 @@ function results(g, t) {
   const won = inRound && ((g.win === "hiders" && wasHider && !g.found[net.sessionId]) || (g.win === "seekers" && (!wasHider || g.found[net.sessionId])));
   $("overTitle").textContent = g.win === "hiders" ? "Hiders win! Some props were people" : g.win === "seekers" ? "Seekers win! Every fake found" : "Round over";
   $("overLine").textContent = inRound ? `You scored ${mine} point${mine === 1 ? "" : "s"}${won ? " and your side won" : ""}.` : "You'll join the next round.";
-  const rows = g.roster.map(([id, name]) => ({ id, name: S.entities.players[id]?.n || name, pts: g.pts[id] || 0, tag: g.found[id] ? "📦→🔍 " : g.seek.includes(id) ? "🔍 " : "📦 " })).sort((a, b) => b.pts - a.pts).slice(0, 10);
+  const rows = g.roster.map(([id, name]) => ({ id, name: S.entities.players[id] ? nameOf(id) : name, pts: g.pts[id] || 0, tag: g.found[id] ? "📦→🔍 " : g.seek.includes(id) ? "🔍 " : "📦 " })).sort((a, b) => b.pts - a.pts).slice(0, 10);
   $("results").innerHTML = rows.map((r) => `<li class="${r.id === net.sessionId ? "me" : ""}">${r.tag}${esc(r.id === net.sessionId ? "You" : r.name)}<span>${r.pts}</span></li>`).join("");
   $("next").textContent = `Next round in ${Math.max(0, Math.ceil((g.endsAt - t) / 1000))}s`;
   if (boardFor !== g.id) { boardFor = g.id; showBoard(inRound && me.gameId === g.id ? mine : 0); }
